@@ -137,11 +137,10 @@ EdgeTAM can be exported to CoreML format for deployment on iOS and macOS devices
 
 ```bash
 # Export EdgeTAM to CoreML format
-python ./tools/export_to_coreml.py \
-  --sam2_cfg configs/edgetam.yaml \
+python ./coreml/export_to_coreml.py \
+  --sam2_cfg ./sam2/configs/edgetam.yaml \
   --sam2_checkpoint ./checkpoints/edgetam.pt \
-  --output_dir ./coreml_models \
-  --validate
+  --output_dir ./coreml_models
 ```
 
 This creates three optimized CoreML models:
