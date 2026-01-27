@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+
 """Benchmark EdgeTAM PyTorch vs CoreML performance.
 
 Author: Krish Mehta (https://github.com/DjKesu)
 """
 
-import time
-import torch
-import numpy as np
-from PIL import Image, ImageDraw
-import coremltools as ct
-import sys
 import os
+import sys
+import time
 from statistics import mean, stdev
-from hydra import initialize_config_dir, compose
+
+import coremltools as ct
+import numpy as np
+import torch
+from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
+from PIL import Image, ImageDraw
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sam2.build_sam import _load_checkpoint
@@ -45,7 +53,9 @@ def load_pytorch_model():
 def load_coreml_models():
     """Load CoreML models."""
     image_encoder = ct.models.MLModel("./coreml_models/edgetam_image_encoder.mlpackage")
-    prompt_encoder = ct.models.MLModel("./coreml_models/edgetam_prompt_encoder.mlpackage")
+    prompt_encoder = ct.models.MLModel(
+        "./coreml_models/edgetam_prompt_encoder.mlpackage"
+    )
     mask_decoder = ct.models.MLModel("./coreml_models/edgetam_mask_decoder.mlpackage")
 
     return image_encoder, prompt_encoder, mask_decoder
@@ -53,10 +63,10 @@ def load_coreml_models():
 
 def create_test_image():
     """Create a test image with shapes."""
-    image = Image.new('RGB', (1024, 1024), color='lightblue')
+    image = Image.new("RGB", (1024, 1024), color="lightblue")
     draw = ImageDraw.Draw(image)
-    draw.ellipse([200, 200, 400, 400], fill='red', outline='darkred', width=3)
-    draw.rectangle([600, 300, 800, 500], fill='green', outline='darkgreen', width=3)
+    draw.ellipse([200, 200, 400, 400], fill="red", outline="darkred", width=3)
+    draw.rectangle([600, 300, 800, 500], fill="green", outline="darkgreen", width=3)
     return image
 
 
@@ -113,12 +123,14 @@ def benchmark_coreml(models, image, point_x, point_y, pytorch_model, num_runs=10
     point_coords[0, 0] = [point_x, point_y]
     point_labels[0, 0] = 1
 
-    _ = prompt_encoder.predict({
-        "point_coords": point_coords,
-        "point_labels": point_labels,
-        "boxes": np.zeros((1, 4), dtype=np.float32),
-        "mask_input": np.zeros((1, 1, 256, 256), dtype=np.float32)
-    })
+    _ = prompt_encoder.predict(
+        {
+            "point_coords": point_coords,
+            "point_labels": point_labels,
+            "boxes": np.zeros((1, 4), dtype=np.float32),
+            "mask_input": np.zeros((1, 1, 256, 256), dtype=np.float32),
+        }
+    )
 
     times = []
     for i in range(num_runs):
@@ -130,36 +142,41 @@ def benchmark_coreml(models, image, point_x, point_y, pytorch_model, num_runs=10
         point_coords[0, 0] = [point_x, point_y]
         point_labels[0, 0] = 1
 
-        prompt_out = prompt_encoder.predict({
-            "point_coords": point_coords,
-            "point_labels": point_labels,
-            "boxes": np.zeros((1, 4), dtype=np.float32),
-            "mask_input": np.zeros((1, 1, 256, 256), dtype=np.float32)
-        })
+        prompt_out = prompt_encoder.predict(
+            {
+                "point_coords": point_coords,
+                "point_labels": point_labels,
+                "boxes": np.zeros((1, 4), dtype=np.float32),
+                "mask_input": np.zeros((1, 1, 256, 256), dtype=np.float32),
+            }
+        )
 
-        mask_out = mask_decoder.predict({
-            "image_embeddings": encoder_out['vision_features'],
-            "image_pe": image_pe,
-            "sparse_prompt_embeddings": prompt_out['sparse_embeddings'],
-            "dense_prompt_embeddings": prompt_out['dense_embeddings'],
-            "high_res_feat_0": encoder_out['high_res_feat_0'],
-            "high_res_feat_1": encoder_out['high_res_feat_1'],
-            "multimask_output": np.array([1.0], dtype=np.float32)
-        })
+        mask_out = mask_decoder.predict(
+            {
+                "image_embeddings": encoder_out["vision_features"],
+                "image_pe": image_pe,
+                "sparse_prompt_embeddings": prompt_out["sparse_embeddings"],
+                "dense_prompt_embeddings": prompt_out["dense_embeddings"],
+                "high_res_feat_0": encoder_out["high_res_feat_0"],
+                "high_res_feat_1": encoder_out["high_res_feat_1"],
+                "multimask_output": np.array([1.0], dtype=np.float32),
+            }
+        )
 
         end_time = time.perf_counter()
         times.append((end_time - start_time) * 1000)  # Convert to ms
 
     # Get best mask from final run
-    masks = mask_out['masks']
-    iou_scores = mask_out['iou_pred']
+    masks = mask_out["masks"]
+    iou_scores = mask_out["iou_pred"]
     best_idx = np.argmax(iou_scores)
     best_mask = masks[0, best_idx]
     best_score = iou_scores[0, best_idx]
 
     # Scale mask to original size
     from scipy import ndimage
-    best_mask = ndimage.zoom(best_mask, (1024/256, 1024/256), order=1)
+
+    best_mask = ndimage.zoom(best_mask, (1024 / 256, 1024 / 256), order=1)
     best_mask = (best_mask > 0.0).astype(np.float32)
 
     return times, best_mask, best_score
@@ -181,7 +198,9 @@ def run_benchmark():
     # Run PyTorch benchmark
     print("=== PYTORCH BENCHMARK ===")
     pytorch_model = load_pytorch_model()
-    pt_times, pt_mask, pt_score = benchmark_pytorch(pytorch_model, test_image, point_x, point_y, num_runs)
+    pt_times, pt_mask, pt_score = benchmark_pytorch(
+        pytorch_model, test_image, point_x, point_y, num_runs
+    )
     pt_mean = mean(pt_times)
     pt_std = stdev(pt_times) if len(pt_times) > 1 else 0
     pt_coverage = pt_mask.sum() / (1024 * 1024) * 100
@@ -195,7 +214,9 @@ def run_benchmark():
     # Run CoreML benchmark
     print("=== COREML BENCHMARK ===")
     coreml_models = load_coreml_models()
-    cm_times, cm_mask, cm_score = benchmark_coreml(coreml_models, test_image, point_x, point_y, pytorch_model, num_runs)
+    cm_times, cm_mask, cm_score = benchmark_coreml(
+        coreml_models, test_image, point_x, point_y, pytorch_model, num_runs
+    )
     cm_mean = mean(cm_times)
     cm_std = stdev(cm_times) if len(cm_times) > 1 else 0
     cm_coverage = cm_mask.sum() / (1024 * 1024) * 100
@@ -249,12 +270,12 @@ def run_benchmark():
     print()
 
     return {
-        'pytorch_time_ms': pt_mean,
-        'coreml_time_ms': cm_mean,
-        'speedup': speedup,
-        'pytorch_score': pt_score,
-        'coreml_score': cm_score,
-        'score_diff': score_diff
+        "pytorch_time_ms": pt_mean,
+        "coreml_time_ms": cm_mean,
+        "speedup": speedup,
+        "pytorch_score": pt_score,
+        "coreml_score": cm_score,
+        "score_diff": score_diff,
     }
 
 

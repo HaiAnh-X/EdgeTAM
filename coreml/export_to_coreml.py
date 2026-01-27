@@ -1,26 +1,36 @@
 #!/usr/bin/env python3
+
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+
 """Export EdgeTAM to CoreML format.
 
 Author: Krish Mehta (https://github.com/DjKesu)
 """
 
+import argparse
+import json
 import os
 import sys
-import argparse
-import torch
-import numpy as np
-import coremltools as ct
-from PIL import Image
-import json
 import warnings
 from typing import Tuple
-from hydra import initialize_config_dir, compose
+
+import coremltools as ct
+import numpy as np
+import torch
+from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
+from PIL import Image
 
 # Suppress warnings
-warnings.filterwarnings("ignore", message="Torch version .* has not been tested with coremltools")
+warnings.filterwarnings(
+    "ignore", message="Torch version .* has not been tested with coremltools"
+)
 warnings.filterwarnings("ignore", message=".*resources.bin missing.*")
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -40,7 +50,9 @@ class EdgeTAMImageEncoder(torch.nn.Module):
         super().__init__()
         self.model = sam_model
 
-    def forward(self, image: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self, image: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         backbone_out = self.model.forward_image(image)
         backbone_fpn = backbone_out.get("backbone_fpn", [])
 
@@ -53,7 +65,9 @@ class EdgeTAMImageEncoder(torch.nn.Module):
             if self.model.directly_add_no_mem_embed:
                 B, C, H, W = vision_features.shape
                 vision_features_flat = vision_features.flatten(2).permute(2, 0, 1)
-                vision_features_flat = vision_features_flat + self.model.no_mem_embed.squeeze(0)
+                vision_features_flat = (
+                    vision_features_flat + self.model.no_mem_embed.squeeze(0)
+                )
                 vision_features = vision_features_flat.permute(1, 2, 0).view(B, C, H, W)
         else:
             bs = image.shape[0]
@@ -71,11 +85,13 @@ class EdgeTAMPromptEncoder(torch.nn.Module):
         super().__init__()
         self.model = sam_model
 
-    def forward(self,
-                point_coords: torch.Tensor,
-                point_labels: torch.Tensor,
-                boxes: torch.Tensor,
-                mask_input: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        point_coords: torch.Tensor,
+        point_labels: torch.Tensor,
+        boxes: torch.Tensor,
+        mask_input: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
 
         sparse_embeddings, dense_embeddings = self.model.sam_prompt_encoder(
             points=(point_coords, point_labels),
@@ -93,14 +109,16 @@ class EdgeTAMMaskDecoder(torch.nn.Module):
         self.model = sam_model
         self.mask_decoder = sam_model.sam_mask_decoder
 
-    def forward(self,
-                image_embeddings: torch.Tensor,
-                image_pe: torch.Tensor,
-                sparse_prompt_embeddings: torch.Tensor,
-                dense_prompt_embeddings: torch.Tensor,
-                high_res_feat_0: torch.Tensor,
-                high_res_feat_1: torch.Tensor,
-                multimask_output: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        image_embeddings: torch.Tensor,
+        image_pe: torch.Tensor,
+        sparse_prompt_embeddings: torch.Tensor,
+        dense_prompt_embeddings: torch.Tensor,
+        high_res_feat_0: torch.Tensor,
+        high_res_feat_1: torch.Tensor,
+        multimask_output: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
 
         use_multimask = multimask_output[0].item() > 0.5
         high_res_features = [high_res_feat_0, high_res_feat_1]
@@ -142,9 +160,9 @@ def export_image_encoder(model, output_path: str):
     image_input = ct.ImageType(
         name="image",
         shape=(1, 3, 1024, 1024),
-        scale=1/255.0,
+        scale=1 / 255.0,
         bias=[0, 0, 0],
-        color_layout=ct.colorlayout.RGB
+        color_layout=ct.colorlayout.RGB,
     )
 
     mlmodel = ct.convert(
@@ -153,11 +171,11 @@ def export_image_encoder(model, output_path: str):
         outputs=[
             ct.TensorType(name="vision_features"),
             ct.TensorType(name="high_res_feat_0"),
-            ct.TensorType(name="high_res_feat_1")
+            ct.TensorType(name="high_res_feat_1"),
         ],
         minimum_deployment_target=ct.target.iOS16,
         compute_units=ct.ComputeUnit.ALL,
-        convert_to="mlprogram"
+        convert_to="mlprogram",
     )
 
     mlmodel.author = "EdgeTAM Contributors"
@@ -183,8 +201,7 @@ def export_prompt_encoder(model, output_path: str):
 
     with torch.no_grad():
         traced_model = torch.jit.trace(
-            encoder_wrapper,
-            (point_coords, point_labels, boxes, mask_input)
+            encoder_wrapper, (point_coords, point_labels, boxes, mask_input)
         )
 
     mlmodel = ct.convert(
@@ -193,15 +210,15 @@ def export_prompt_encoder(model, output_path: str):
             ct.TensorType(name="point_coords", shape=(1, 4, 2)),
             ct.TensorType(name="point_labels", shape=(1, 4)),
             ct.TensorType(name="boxes", shape=(1, 4)),
-            ct.TensorType(name="mask_input", shape=(1, 1, 256, 256))
+            ct.TensorType(name="mask_input", shape=(1, 1, 256, 256)),
         ],
         outputs=[
             ct.TensorType(name="sparse_embeddings"),
-            ct.TensorType(name="dense_embeddings")
+            ct.TensorType(name="dense_embeddings"),
         ],
         minimum_deployment_target=ct.target.iOS16,
         compute_units=ct.ComputeUnit.ALL,
-        convert_to="mlprogram"
+        convert_to="mlprogram",
     )
 
     mlmodel.author = "EdgeTAM Contributors"
@@ -229,8 +246,15 @@ def export_mask_decoder(model, output_path: str):
     with torch.no_grad():
         traced_model = torch.jit.trace(
             decoder_wrapper,
-            (image_embeddings, image_pe, sparse_prompt_embeddings,
-             dense_prompt_embeddings, high_res_feat_0, high_res_feat_1, multimask_output)
+            (
+                image_embeddings,
+                image_pe,
+                sparse_prompt_embeddings,
+                dense_prompt_embeddings,
+                high_res_feat_0,
+                high_res_feat_1,
+                multimask_output,
+            ),
         )
 
     mlmodel = ct.convert(
@@ -238,19 +262,18 @@ def export_mask_decoder(model, output_path: str):
         inputs=[
             ct.TensorType(name="image_embeddings", shape=(1, 256, 64, 64)),
             ct.TensorType(name="image_pe", shape=(1, 256, 64, 64)),
-            ct.TensorType(name="sparse_prompt_embeddings", shape=(1, ct.RangeDim(1, 10), 256)),
+            ct.TensorType(
+                name="sparse_prompt_embeddings", shape=(1, ct.RangeDim(1, 10), 256)
+            ),
             ct.TensorType(name="dense_prompt_embeddings", shape=(1, 256, 64, 64)),
             ct.TensorType(name="high_res_feat_0", shape=(1, 32, 256, 256)),
             ct.TensorType(name="high_res_feat_1", shape=(1, 64, 128, 128)),
-            ct.TensorType(name="multimask_output", shape=(1,))
+            ct.TensorType(name="multimask_output", shape=(1,)),
         ],
-        outputs=[
-            ct.TensorType(name="masks"),
-            ct.TensorType(name="iou_pred")
-        ],
+        outputs=[ct.TensorType(name="masks"), ct.TensorType(name="iou_pred")],
         minimum_deployment_target=ct.target.iOS16,
         compute_units=ct.ComputeUnit.ALL,
-        convert_to="mlprogram"
+        convert_to="mlprogram",
     )
 
     mlmodel.author = "EdgeTAM Contributors"
@@ -264,8 +287,12 @@ def export_mask_decoder(model, output_path: str):
 def main():
     parser = argparse.ArgumentParser(description="Export EdgeTAM to CoreML")
     parser.add_argument("--sam2_cfg", required=True, help="Path to EdgeTAM config file")
-    parser.add_argument("--sam2_checkpoint", required=True, help="Path to EdgeTAM checkpoint")
-    parser.add_argument("--output_dir", default="./coreml_models", help="Output directory")
+    parser.add_argument(
+        "--sam2_checkpoint", required=True, help="Path to EdgeTAM checkpoint"
+    )
+    parser.add_argument(
+        "--output_dir", default="./coreml_models", help="Output directory"
+    )
 
     args = parser.parse_args()
 
@@ -300,18 +327,15 @@ def main():
 
     try:
         export_image_encoder(
-            model,
-            os.path.join(args.output_dir, "edgetam_image_encoder.mlpackage")
+            model, os.path.join(args.output_dir, "edgetam_image_encoder.mlpackage")
         )
 
         export_prompt_encoder(
-            model,
-            os.path.join(args.output_dir, "edgetam_prompt_encoder.mlpackage")
+            model, os.path.join(args.output_dir, "edgetam_prompt_encoder.mlpackage")
         )
 
         export_mask_decoder(
-            model,
-            os.path.join(args.output_dir, "edgetam_mask_decoder.mlpackage")
+            model, os.path.join(args.output_dir, "edgetam_mask_decoder.mlpackage")
         )
 
         # Create simple metadata
@@ -321,11 +345,11 @@ def main():
             "components": {
                 "image_encoder": "edgetam_image_encoder.mlpackage",
                 "prompt_encoder": "edgetam_prompt_encoder.mlpackage",
-                "mask_decoder": "edgetam_mask_decoder.mlpackage"
-            }
+                "mask_decoder": "edgetam_mask_decoder.mlpackage",
+            },
         }
 
-        with open(os.path.join(args.output_dir, "model_info.json"), 'w') as f:
+        with open(os.path.join(args.output_dir, "model_info.json"), "w") as f:
             json.dump(metadata, f, indent=2)
 
         print(f"\nExport completed successfully!")

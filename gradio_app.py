@@ -17,7 +17,6 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-
 from moviepy.editor import ImageSequenceClip
 from PIL import Image
 from sam2.build_sam import build_sam2_video_predictor
