@@ -1,11 +1,10 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
 
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-
+import random
 import argparse
 import os
+import sys
 from collections import defaultdict
 
 import numpy as np
@@ -13,10 +12,24 @@ import torch
 from PIL import Image
 from sam2.build_sam import build_sam2_video_predictor
 
+# --- HOSVD plugin ---
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from build_model.apply_patch import apply_patch, stats, _previous_Ulist
+
 
 # the PNG palette for DAVIS 2017 dataset
 DAVIS_PALETTE = b"\x00\x00\x00\x80\x00\x00\x00\x80\x00\x80\x80\x00\x00\x00\x80\x80\x00\x80\x00\x80\x80\x80\x80\x80@\x00\x00\xc0\x00\x00@\x80\x00\xc0\x80\x00@\x00\x80\xc0\x00\x80@\x80\x80\xc0\x80\x80\x00@\x00\x80@\x00\x00\xc0\x00\x80\xc0\x00\x00@\x80\x80@\x80\x00\xc0\x80\x80\xc0\x80@@\x00\xc0@\x00@\xc0\x00\xc0\xc0\x00@@\x80\xc0@\x80@\xc0\x80\xc0\xc0\x80\x00\x00@\x80\x00@\x00\x80@\x80\x80@\x00\x00\xc0\x80\x00\xc0\x00\x80\xc0\x80\x80\xc0@\x00@\xc0\x00@@\x80@\xc0\x80@@\x00\xc0\xc0\x00\xc0@\x80\xc0\xc0\x80\xc0\x00@@\x80@@\x00\xc0@\x80\xc0@\x00@\xc0\x80@\xc0\x00\xc0\xc0\x80\xc0\xc0@@@\xc0@@@\xc0@\xc0\xc0@@@\xc0\xc0@\xc0@\xc0\xc0\xc0\xc0\xc0 \x00\x00\xa0\x00\x00 \x80\x00\xa0\x80\x00 \x00\x80\xa0\x00\x80 \x80\x80\xa0\x80\x80`\x00\x00\xe0\x00\x00`\x80\x00\xe0\x80\x00`\x00\x80\xe0\x00\x80`\x80\x80\xe0\x80\x80 @\x00\xa0@\x00 \xc0\x00\xa0\xc0\x00 @\x80\xa0@\x80 \xc0\x80\xa0\xc0\x80`@\x00\xe0@\x00`\xc0\x00\xe0\xc0\x00`@\x80\xe0@\x80`\xc0\x80\xe0\xc0\x80 \x00@\xa0\x00@ \x80@\xa0\x80@ \x00\xc0\xa0\x00\xc0 \x80\xc0\xa0\x80\xc0`\x00@\xe0\x00@`\x80@\xe0\x80@`\x00\xc0\xe0\x00\xc0`\x80\xc0\xe0\x80\xc0 @@\xa0@@ \xc0@\xa0\xc0@ @\xc0\xa0@\xc0 \xc0\xc0\xa0\xc0\xc0`@@\xe0@@`\xc0@\xe0\xc0@`@\xc0\xe0@\xc0`\xc0\xc0\xe0\xc0\xc0\x00 \x00\x80 \x00\x00\xa0\x00\x80\xa0\x00\x00 \x80\x80 \x80\x00\xa0\x80\x80\xa0\x80@ \x00\xc0 \x00@\xa0\x00\xc0\xa0\x00@ \x80\xc0 \x80@\xa0\x80\xc0\xa0\x80\x00`\x00\x80`\x00\x00\xe0\x00\x80\xe0\x00\x00`\x80\x80`\x80\x00\xe0\x80\x80\xe0\x80@`\x00\xc0`\x00@\xe0\x00\xc0\xe0\x00@`\x80\xc0`\x80@\xe0\x80\xc0\xe0\x80\x00 @\x80 @\x00\xa0@\x80\xa0@\x00 \xc0\x80 \xc0\x00\xa0\xc0\x80\xa0\xc0@ @\xc0 @@\xa0@\xc0\xa0@@ \xc0\xc0 \xc0@\xa0\xc0\xc0\xa0\xc0\x00`@\x80`@\x00\xe0@\x80\xe0@\x00`\xc0\x80`\xc0\x00\xe0\xc0\x80\xe0\xc0@`@\xc0`@@\xe0@\xc0\xe0@@`\xc0\xc0`\xc0@\xe0\xc0\xc0\xe0\xc0  \x00\xa0 \x00 \xa0\x00\xa0\xa0\x00  \x80\xa0 \x80 \xa0\x80\xa0\xa0\x80` \x00\xe0 \x00`\xa0\x00\xe0\xa0\x00` \x80\xe0 \x80`\xa0\x80\xe0\xa0\x80 `\x00\xa0`\x00 \xe0\x00\xa0\xe0\x00 `\x80\xa0`\x80 \xe0\x80\xa0\xe0\x80``\x00\xe0`\x00`\xe0\x00\xe0\xe0\x00``\x80\xe0`\x80`\xe0\x80\xe0\xe0\x80  @\xa0 @ \xa0@\xa0\xa0@  \xc0\xa0 \xc0 \xa0\xc0\xa0\xa0\xc0` @\xe0 @`\xa0@\xe0\xa0@` \xc0\xe0 \xc0`\xa0\xc0\xe0\xa0\xc0 `@\xa0`@ \xe0@\xa0\xe0@ `\xc0\xa0`\xc0 \xe0\xc0\xa0\xe0\xc0``@\xe0`@`\xe0@\xe0\xe0@``\xc0\xe0`\xc0`\xe0\xc0\xe0\xe0\xc0"
 
+
+
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark     = False
+    print(f"[seed] set to {seed}")
 
 def load_ann_png(path):
     """Load a PNG file as a mask and its palette."""
@@ -67,7 +80,6 @@ def load_masks_from_dir(
     else:
         per_obj_input_mask = {}
         input_palette = None
-        # each object is a directory in "{object_id:%03d}" format
         for object_name in os.listdir(os.path.join(input_mask_dir, video_name)):
             object_id = int(object_name)
             input_mask_path = os.path.join(
@@ -113,6 +125,31 @@ def save_masks_to_dir(
             save_ann_png(output_mask_path, output_mask, output_palette)
 
 
+def print_stats(mode):
+    """Print compression stats for a given mode after inference."""
+    if mode == "baseline":
+        return
+
+    prefix = f"hosvd" if mode == "hosvd" else "hosvd_subspace_iteration"
+    mse_list    = stats[f"{prefix}_mse"]
+    mem_list    = stats[f"{prefix}_memory"]
+    overhead    = stats[f"{prefix}_overhead"]
+
+    if not mse_list:
+        return
+
+    mean_mse    = np.mean(mse_list)
+    orig_bytes  = np.mean([m[0] for m in mem_list])
+    comp_bytes  = np.mean([m[1] for m in mem_list])
+    ratio       = orig_bytes / comp_bytes if comp_bytes > 0 else float("inf")
+    n_frames    = len(mse_list)
+
+    print(f"\n[{mode}] Stats over {n_frames} memory frames:")
+    print(f"  Mean MSE              : {mean_mse:.6f}")
+    print(f"  Mean compression ratio: {ratio:.2f}x")
+    print(f"  Total overhead        : {overhead * 1000:.1f} ms  ({overhead / n_frames * 1000:.2f} ms/frame)")
+
+
 @torch.inference_mode()
 @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
 def vos_inference(
@@ -126,7 +163,6 @@ def vos_inference(
     per_obj_png_file=False,
 ):
     """Run VOS inference on a single video with the given predictor."""
-    # load the video frames and initialize the inference state on this video
     video_dir = os.path.join(base_video_dir, video_name)
     frame_names = [
         os.path.splitext(p)[0]
@@ -141,12 +177,9 @@ def vos_inference(
     width = inference_state["video_width"]
     input_palette = None
 
-    # fetch mask inputs from input_mask_dir (either only mask for the first frame, or all available masks)
     if not use_all_masks:
-        # use only the first video's ground-truth mask as the input mask
         input_frame_inds = [0]
     else:
-        # use all mask files available in the input_mask_dir as the input masks
         if not per_obj_png_file:
             input_frame_inds = [
                 idx
@@ -164,7 +197,6 @@ def vos_inference(
                     os.path.join(input_mask_dir, video_name, object_name, f"{name}.png")
                 )
             ]
-        # check and make sure we got at least one input frame
         if len(input_frame_inds) == 0:
             raise RuntimeError(
                 f"In {video_name=}, got no input masks in {input_mask_dir=}. "
@@ -172,7 +204,6 @@ def vos_inference(
             )
         input_frame_inds = sorted(set(input_frame_inds))
 
-    # add those input masks to SAM 2 inference state before propagation
     object_ids_set = None
     for input_frame_idx in input_frame_inds:
         try:
@@ -189,11 +220,9 @@ def vos_inference(
                 "for VOS datasets that don't have all objects to track appearing "
                 "in the first frame (such as LVOS or YouTube-VOS)."
             ) from e
-        # get the list of object ids to track from the first input frame
         if object_ids_set is None:
             object_ids_set = set(per_obj_input_mask)
         for object_id, object_mask in per_obj_input_mask.items():
-            # check and make sure no new object ids appear only in later frames
             if object_id not in object_ids_set:
                 raise RuntimeError(
                     f"In {video_name=}, got a new {object_id=} appearing only in a "
@@ -209,7 +238,6 @@ def vos_inference(
                 mask=object_mask,
             )
 
-    # check and make sure we have at least one object to track
     if object_ids_set is None or len(object_ids_set) == 0:
         raise RuntimeError(
             f"In {video_name=}, got no object ids on {input_frame_inds=}. "
@@ -217,10 +245,10 @@ def vos_inference(
             "for VOS datasets that don't have all objects to track appearing "
             "in the first frame (such as LVOS or YouTube-VOS)."
         )
-    # run propagation throughout the video and collect the results in a dict
+
     os.makedirs(os.path.join(output_mask_dir, video_name), exist_ok=True)
     output_palette = input_palette or DAVIS_PALETTE
-    video_segments = {}  # video_segments contains the per-frame segmentation results
+    video_segments = {}
     for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(
         inference_state
     ):
@@ -230,7 +258,6 @@ def vos_inference(
         }
         video_segments[out_frame_idx] = per_obj_output_mask
 
-    # write the output masks as palette PNG files to output_mask_dir
     for out_frame_idx, per_obj_output_mask in video_segments.items():
         save_masks_to_dir(
             output_mask_dir=output_mask_dir,
@@ -261,10 +288,8 @@ def vos_separate_inference_per_object(
 
     Unlike `vos_inference`, this function run inference separately for each object
     in a video, which could be applied to datasets like LVOS or YouTube-VOS that
-    don't have all objects to track appearing in the first frame (i.e. some objects
-    might appear only later in the video).
+    don't have all objects to track appearing in the first frame.
     """
-    # load the video frames and initialize the inference state on this video
     video_dir = os.path.join(base_video_dir, video_name)
     frame_names = [
         os.path.splitext(p)[0]
@@ -279,7 +304,6 @@ def vos_separate_inference_per_object(
     width = inference_state["video_width"]
     input_palette = None
 
-    # collect all the object ids and their input masks
     inputs_per_object = defaultdict(dict)
     for idx, name in enumerate(frame_names):
         if per_obj_png_file or os.path.exists(
@@ -293,20 +317,16 @@ def vos_separate_inference_per_object(
                 allow_missing=True,
             )
             for object_id, object_mask in per_obj_input_mask.items():
-                # skip empty masks
                 if not np.any(object_mask):
                     continue
-                # if `use_all_masks=False`, we only use the first mask for each object
                 if len(inputs_per_object[object_id]) > 0 and not use_all_masks:
                     continue
                 print(f"adding mask from frame {idx} as input for {object_id=}")
                 inputs_per_object[object_id][idx] = object_mask
 
-    # run inference separately for each object in the video
     object_ids = sorted(inputs_per_object)
     output_scores_per_object = defaultdict(dict)
     for object_id in object_ids:
-        # add those input masks to SAM 2 inference state before propagation
         input_frame_inds = sorted(inputs_per_object[object_id])
         predictor.reset_state(inference_state)
         for input_frame_idx in input_frame_inds:
@@ -317,7 +337,6 @@ def vos_separate_inference_per_object(
                 mask=inputs_per_object[object_id][input_frame_idx],
             )
 
-        # run propagation throughout the video and collect the results in a dict
         for out_frame_idx, _, out_mask_logits in predictor.propagate_in_video(
             inference_state,
             start_frame_idx=min(input_frame_inds),
@@ -326,10 +345,9 @@ def vos_separate_inference_per_object(
             obj_scores = out_mask_logits.cpu().numpy()
             output_scores_per_object[object_id][out_frame_idx] = obj_scores
 
-    # post-processing: consolidate the per-object scores into per-frame masks
     os.makedirs(os.path.join(output_mask_dir, video_name), exist_ok=True)
     output_palette = input_palette or DAVIS_PALETTE
-    video_segments = {}  # video_segments contains the per-frame segmentation results
+    video_segments = {}
     for frame_idx in range(len(frame_names)):
         scores = torch.full(
             size=(len(object_ids), 1, height, width),
@@ -350,7 +368,6 @@ def vos_separate_inference_per_object(
         }
         video_segments[frame_idx] = per_obj_output_mask
 
-    # write the output masks as palette PNG files to output_mask_dir
     for frame_idx, per_obj_output_mask in video_segments.items():
         save_masks_to_dir(
             output_mask_dir=output_mask_dir,
@@ -365,78 +382,41 @@ def vos_separate_inference_per_object(
 
 
 def main():
+    os.environ["TQDM_DISABLE"] = "1"
     parser = argparse.ArgumentParser()
+    parser.add_argument("--sam2_cfg",        type=str, default="configs/edgetam.yaml")
+    parser.add_argument("--sam2_checkpoint", type=str, default="./checkpoints/edgetam.pt")
+    parser.add_argument("--base_video_dir",  type=str, required=True)
+    parser.add_argument("--input_mask_dir",  type=str, required=True)
+    parser.add_argument("--video_list_file", type=str, default=None)
+    parser.add_argument("--output_mask_dir", type=str, required=True)
+    parser.add_argument("--score_thresh",    type=float, default=0.0)
+    parser.add_argument("--use_all_masks",   action="store_true")
+    parser.add_argument("--per_obj_png_file", action="store_true")
+    parser.add_argument("--apply_postprocessing", action="store_true")
+    parser.add_argument("--track_object_appearing_later_in_video", action="store_true")
+    # --- new args ---
     parser.add_argument(
-        "--sam2_cfg",
+        "--mode",
         type=str,
-        default="configs/edgetam.yaml",
-        help="SAM 2 model configuration file",
+        default="baseline",
+        choices=["baseline", "hosvd", "hosvd_subspace_iteration"],
+        help="Memory compression mode (default: baseline = no compression)",
     )
     parser.add_argument(
-        "--sam2_checkpoint",
-        type=str,
-        default="./checkpoints/edgetam.pt",
-        help="path to the SAM 2 model checkpoint",
+        "--rank",
+        type=int,
+        default=48,
+        help="Rank for hosvd_subspace_iteration subspace iteration (default: 48)",
     )
     parser.add_argument(
-        "--base_video_dir",
-        type=str,
-        required=True,
-        help="directory containing videos (as JPEG files) to run VOS prediction on",
-    )
-    parser.add_argument(
-        "--input_mask_dir",
-        type=str,
-        required=True,
-        help="directory containing input masks (as PNG files) of each video",
-    )
-    parser.add_argument(
-        "--video_list_file",
-        type=str,
-        default=None,
-        help="text file containing the list of video names to run VOS prediction on",
-    )
-    parser.add_argument(
-        "--output_mask_dir",
-        type=str,
-        required=True,
-        help="directory to save the output masks (as PNG files)",
-    )
-    parser.add_argument(
-        "--score_thresh",
+        "--var_threshold",
         type=float,
-        default=0.0,
-        help="threshold for the output mask logits (default: 0.0)",
-    )
-    parser.add_argument(
-        "--use_all_masks",
-        action="store_true",
-        help="whether to use all available PNG files in input_mask_dir "
-        "(default without this flag: just the first PNG file as input to the SAM 2 model; "
-        "usually we don't need this flag, since semi-supervised VOS evaluation usually takes input from the first frame only)",
-    )
-    parser.add_argument(
-        "--per_obj_png_file",
-        action="store_true",
-        help="whether use separate per-object PNG files for input and output masks "
-        "(default without this flag: all object masks are packed into a single PNG file on each frame following DAVIS format; "
-        "note that the SA-V dataset stores each object mask as an individual PNG file and requires this flag)",
-    )
-    parser.add_argument(
-        "--apply_postprocessing",
-        action="store_true",
-        help="whether to apply postprocessing (e.g. hole-filling) to the output masks "
-        "(we don't apply such post-processing in the SAM 2 model evaluation)",
-    )
-    parser.add_argument(
-        "--track_object_appearing_later_in_video",
-        action="store_true",
-        help="whether to track objects that appear later in the video (i.e. not on the first frame; "
-        "some VOS datasets like LVOS or YouTube-VOS don't have all objects appearing in the first frame)",
+        default=0.99,
+        help="Variance threshold for hosvd rank selection (default: 0.99)",
     )
     args = parser.parse_args()
 
-    # if we use per-object PNG files, they could possibly overlap in inputs and outputs
     hydra_overrides_extra = [
         "++model.non_overlap_masks=" + ("false" if args.per_obj_png_file else "true")
     ]
@@ -447,14 +427,15 @@ def main():
         hydra_overrides_extra=hydra_overrides_extra,
     )
 
+    # --- apply HOSVD patch before inference ---
+    apply_patch(args.mode, rank=args.rank, var_threshold=args.var_threshold)
+    print(f"[patch] mode={args.mode}" + (f", rank={args.rank}" if args.mode == "hosvd_subspace_iteration" else ""))
+
     if args.use_all_masks:
-        print("using all available masks in input_mask_dir as input to the SAM 2 model")
+        print("using all available masks in input_mask_dir as input")
     else:
-        print(
-            "using only the first frame's mask in input_mask_dir as input to the SAM 2 model"
-        )
-    # if a video list file is provided, read the video names from the file
-    # (otherwise, we use all subdirectories in base_video_dir)
+        print("using only the first frame mask as input")
+
     if args.video_list_file is not None:
         with open(args.video_list_file, "r") as f:
             video_names = [v.strip() for v in f.readlines()]
@@ -464,10 +445,15 @@ def main():
             for p in os.listdir(args.base_video_dir)
             if os.path.isdir(os.path.join(args.base_video_dir, p))
         ]
-    print(f"running VOS prediction on {len(video_names)} videos:\n{video_names}")
+    print(f"running VOS prediction on {len(video_names)} videos")
 
     for n_video, video_name in enumerate(video_names):
         print(f"\n{n_video + 1}/{len(video_names)} - running on {video_name}")
+
+        # reset warm-start U between videos (important for hosvd_subspace_iteration)
+        import build_model.apply_patch as _patch_module
+        _patch_module._previous_Ulist = None
+
         if not args.track_object_appearing_later_in_video:
             vos_inference(
                 predictor=predictor,
@@ -491,10 +477,10 @@ def main():
                 per_obj_png_file=args.per_obj_png_file,
             )
 
-    print(
-        f"completed VOS prediction on {len(video_names)} videos -- "
-        f"output masks saved to {args.output_mask_dir}"
-    )
+    print(f"\ncompleted VOS prediction on {len(video_names)} videos -- output saved to {args.output_mask_dir}")
+
+    # --- print compression stats at the end ---
+    print_stats(args.mode)
 
 
 if __name__ == "__main__":
